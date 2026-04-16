@@ -30,8 +30,17 @@ def detect_policy_type(policy):
 async def analyze_policy(file: UploadFile = File(...)):
     content = await file.read()
 
-    # KEEP THIS SIMPLE (no decode changes)
-    policy = json.loads(content)
+    try:
+        policy = json.loads(content)
+    except:
+        try:
+            policy = json.loads(content.decode("utf-8"))
+        except Exception as e:
+            return {
+                "policy_type": "Unknown",
+                "severity": "LOW",
+                "findings": [f"Invalid JSON: {str(e)}"]
+            }
 
     findings = []
     severities = []
