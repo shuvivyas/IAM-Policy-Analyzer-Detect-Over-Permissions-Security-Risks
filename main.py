@@ -31,4 +31,5 @@ async def analyze(request: Request):
 async def upload_policy(file: UploadFile = File(...)):
     content = await file.read()
     policy = json.loads(content)
-    return analyze_policy(policy)
+    return {"test": "coming from render"}
+    
