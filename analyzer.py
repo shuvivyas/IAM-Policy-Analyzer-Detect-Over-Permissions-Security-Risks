@@ -1,178 +1,94 @@
-# def analyze_policy(policy):
-#     findings = []
-
-#     statements = policy.get("Statement", [])
-
-#     if not isinstance(statements, list):
-#         statements = [statements]
-
-#     for stmt in statements:
-#         action = stmt.get("Action", [])
-#         resource = stmt.get("Resource", [])
-#         effect = stmt.get("Effect", "")
-
-#         # Normalize to list
-#         if isinstance(action, str):
-#             action = [action]
-#         if isinstance(resource, str):
-#             resource = [resource]
-
-#         # Rule 1: Action = "*"
-#         if "*" in action:
-#             findings.append({
-#                 "issue": "Wildcard Action (*)",
-#                 "risk": "High",
-#                 "fix": "Specify only required actions like s3:GetObject"
-#             })
-
-#         # Rule 2: Resource = "*"
-#         if "*" in resource:
-#             findings.append({
-#                 "issue": "Wildcard Resource (*)",
-#                 "risk": "High",
-#                 "fix": "Restrict to specific resources"
-#             })
-
-#         # Rule 3: Both = "*"
-#         if "*" in action and "*" in resource:
-#             findings.append({
-#                 "issue": "Full Admin Access",
-#                 "risk": "Critical",
-#                 "fix": "Apply least privilege principle"
-#             })
-
-#         # Rule 4: Sensitive services
-#         sensitive = ["iam:*", "sts:*"]
-#         for a in action:
-#             if a in sensitive:
-#                 findings.append({
-#                     "issue": f"Sensitive permission ({a})",
-#                     "risk": "High",
-#                     "fix": "Avoid giving full IAM/STS access"
-#                 })
-
-#     return findings
-
 def analyze_policy(policy):
     findings = []
     total_score = 0
 
+    attack_map = {
+        "Wildcard Action (*)": "Privilege Escalation",
+        "Wildcard Resource (*)": "Data Exposure",
+        "Full Admin Access": "Account Takeover",
+        "Full S3 Access": "Data Exfiltration",
+        "Full IAM Access": "Privilege Escalation"
+    }
+
     statements = policy.get("Statement", [])
-    if not isinstance(statements, list):
-        statements = [statements]
 
-    def add_finding(issue, risk, score, fix):
-        nonlocal total_score
-
-        if issue not in seen_issues:
-            seen_issues.add(issue)
-            findings.append({
-                "issue": issue,
-                "risk": risk,
-                "score": score,
-                "fix": fix
-            })
-            total_score += score
-            
     for stmt in statements:
-        action = stmt.get("Action", [])
-        resource = stmt.get("Resource", [])
-        effect = stmt.get("Effect", "")
+        actions = stmt.get("Action", [])
+        resources = stmt.get("Resource", [])
 
-        if isinstance(action, str):
-            action = [action]
-        if isinstance(resource, str):
-            resource = [resource]
+        if isinstance(actions, str):
+            actions = [actions]
+        if isinstance(resources, str):
+            resources = [resources]
 
-        # --- RULE 1: Wildcard Action ---
-        if "*" in action:
+        # 🔴 Wildcard Action
+        if "*" in actions:
             findings.append({
                 "issue": "Wildcard Action (*)",
-                "risk": "High",
-                "score": 80,
-                "fix": "Specify only required actions"
-            })
-            total_score += 80
-
-        # --- RULE 2: Wildcard Resource ---
-        if "*" in resource:
-            findings.append({
-                "issue": "Wildcard Resource (*)",
-                "risk": "High",
-                "score": 75,
-                "fix": "Restrict to specific resources"
-            })
-            total_score += 75
-
-        # --- RULE 3: Full Admin ---
-        if "*" in action and "*" in resource and effect == "Allow":
-            findings.append({
-                "issue": "Full Admin Access",
                 "risk": "Critical",
-                "score": 100,
-                "fix": "Apply least privilege"
+                "fix": "Avoid using '*' in Action. Specify only required actions.",
+                "attack": attack_map["Wildcard Action (*)"]
             })
             total_score += 100
 
-        # --- RULE 4: Privilege Escalation ---
-        escalation_actions = [
-            "iam:PassRole",
-            "iam:AttachRolePolicy",
-            "iam:PutRolePolicy",
-            "sts:AssumeRole"
-        ]
+        # 🟠 Wildcard Resource
+        if "*" in resources:
+            findings.append({
+                "issue": "Wildcard Resource (*)",
+                "risk": "High",
+                "fix": "Restrict Resource to specific ARNs.",
+                "attack": attack_map["Wildcard Resource (*)"]
+            })
+            total_score += 80
 
-        for a in action:
-            if a in escalation_actions:
-                findings.append({
-                    "issue": f"Privilege Escalation Risk ({a})",
-                    "risk": "Critical",
-                    "score": 95,
-                    "fix": "Restrict role modification permissions"
-                })
-                total_score += 95
+        # 🔥 AWS Context Checks
+        if any("iam:*" in a.lower() for a in actions):
+            findings.append({
+                "issue": "Full IAM Access",
+                "risk": "Critical",
+                "fix": "Limit IAM permissions to required actions.",
+                "attack": attack_map["Full IAM Access"]
+            })
+            total_score += 100
 
-        # --- RULE 5: Sensitive Services ---
-        sensitive = ["iam:*", "sts:*", "organizations:*"]
-        for a in action:
-            if a in sensitive:
-                findings.append({
-                    "issue": f"Sensitive Permission ({a})",
-                    "risk": "High",
-                    "score": 85,
-                    "fix": "Limit access to sensitive services"
-                })
-                total_score += 85
+        if any("s3:*" in a.lower() for a in actions):
+            findings.append({
+                "issue": "Full S3 Access",
+                "risk": "High",
+                "fix": "Restrict S3 actions to required operations.",
+                "attack": attack_map["Full S3 Access"]
+            })
+            total_score += 80
 
-        # --- RULE 6: Dangerous Write/Delete ---
-        dangerous = [
-            "s3:PutObject",
-            "s3:DeleteObject",
-            "ec2:TerminateInstances"
-        ]
+        # 🔴 Admin Access
+        if "*" in actions and "*" in resources:
+            findings.append({
+                "issue": "Full Admin Access",
+                "risk": "Critical",
+                "fix": "Avoid full access policies. Follow least privilege.",
+                "attack": attack_map["Full Admin Access"]
+            })
+            total_score += 120
 
-        for a in action:
-            if a in dangerous:
-                findings.append({
-                    "issue": f"Destructive Action ({a})",
-                    "risk": "Medium",
-                    "score": 60,
-                    "fix": "Restrict destructive permissions"
-                })
-                total_score += 60
-
-    # --- Overall Risk ---
-    if total_score >= 150:
-        overall = "Critical"
+    # 🎯 Overall Risk
+    if total_score >= 200:
+        overall_risk = "Critical"
     elif total_score >= 100:
-        overall = "High"
-    elif total_score >= 50:
-        overall = "Medium"
+        overall_risk = "High"
     else:
-        overall = "Low"
+        overall_risk = "Low"
+
+    # 🧠 Policy Type Detection
+    policy_type = "Secure Policy"
+
+    if total_score >= 200:
+        policy_type = "Over-Permissive Policy"
+    elif any(f["issue"] == "Full Admin Access" for f in findings):
+        policy_type = "Admin Policy"
 
     return {
-        "overall_risk": overall,
+        "overall_risk": overall_risk,
         "total_score": total_score,
+        "policy_type": policy_type,
         "findings": findings
     }
