@@ -1,16 +1,43 @@
-def analyze_policy(policy):
-    findings = []
-    total_score = 0
+from fastapi import FastAPI, File, UploadFile
+import json
 
-    attack_map = {
-        "Wildcard Action (*)": "Privilege Escalation",
-        "Wildcard Resource (*)": "Data Exposure",
-        "Full Admin Access": "Account Takeover",
-        "Full S3 Access": "Data Exfiltration",
-        "Full IAM Access": "Privilege Escalation"
-    }
+app = FastAPI()
+
+# Severity priority
+priority = {
+    "LOW": 1,
+    "MEDIUM": 2,
+    "HIGH": 3,
+    "CRITICAL": 4
+}
+
+
+def detect_policy_type(policy):
+    try:
+        statements = policy.get("Statement", [])
+        if not isinstance(statements, list):
+            statements = [statements]
+
+        for stmt in statements:
+            if "Principal" in stmt:
+                return "Resource-Based Policy"
+
+        return "Identity-Based Policy"
+    except:
+        return "Unknown"
+
+
+@app.post("/analyze")
+async def analyze_policy(file: UploadFile = File(...)):
+    content = await file.read()
+    policy = json.loads(content)
+
+    findings = []
+    severities = []
 
     statements = policy.get("Statement", [])
+    if not isinstance(statements, list):
+        statements = [statements]
 
     for stmt in statements:
         actions = stmt.get("Action", [])
@@ -21,74 +48,46 @@ def analyze_policy(policy):
         if isinstance(resources, str):
             resources = [resources]
 
-        # 🔴 Wildcard Action
-        if "*" in actions:
-            findings.append({
-                "issue": "Wildcard Action (*)",
-                "risk": "Critical",
-                "fix": "Avoid using '*' in Action. Specify only required actions.",
-                "attack": attack_map["Wildcard Action (*)"]
-            })
-            total_score += 100
-
-        # 🟠 Wildcard Resource
-        if "*" in resources:
-            findings.append({
-                "issue": "Wildcard Resource (*)",
-                "risk": "High",
-                "fix": "Restrict Resource to specific ARNs.",
-                "attack": attack_map["Wildcard Resource (*)"]
-            })
-            total_score += 80
-
-        # 🔥 AWS Context Checks
-        if any("iam:*" in a.lower() for a in actions):
-            findings.append({
-                "issue": "Full IAM Access",
-                "risk": "Critical",
-                "fix": "Limit IAM permissions to required actions.",
-                "attack": attack_map["Full IAM Access"]
-            })
-            total_score += 100
-
-        if any("s3:*" in a.lower() for a in actions):
-            findings.append({
-                "issue": "Full S3 Access",
-                "risk": "High",
-                "fix": "Restrict S3 actions to required operations.",
-                "attack": attack_map["Full S3 Access"]
-            })
-            total_score += 80
-
-        # 🔴 Admin Access
+        # 🚨 CRITICAL: Full wildcard
         if "*" in actions and "*" in resources:
-            findings.append({
-                "issue": "Full Admin Access",
-                "risk": "Critical",
-                "fix": "Avoid full access policies. Follow least privilege.",
-                "attack": attack_map["Full Admin Access"]
-            })
-            total_score += 120
+            findings.append("Full wildcard access (*:*)")
+            severities.append("CRITICAL")
+            continue  # no need to check further
 
-    # 🎯 Overall Risk
-    if total_score >= 200:
-        overall_risk = "Critical"
-    elif total_score >= 100:
-        overall_risk = "High"
+        # 🔥 HIGH: wildcard action
+        if "*" in actions:
+            findings.append("Wildcard action detected")
+            severities.append("HIGH")
+
+        # 🔥 HIGH: IAM full access
+        for action in actions:
+            if action.startswith("iam:"):
+                findings.append("Sensitive IAM permission detected")
+                severities.append("HIGH")
+                break
+
+        # 🟠 MEDIUM: wildcard resource
+        if "*" in resources:
+            findings.append("Resource is too broad (*)")
+            severities.append("MEDIUM")
+
+        # 🟠 MEDIUM: destructive S3 actions
+        for action in actions:
+            if action in ["s3:PutObject", "s3:DeleteObject"]:
+                findings.append("Destructive S3 permission detected")
+                severities.append("MEDIUM")
+                break
+
+    # ✅ FINAL SEVERITY = MAX (NOT SUM)
+    if severities:
+        final_severity = max(severities, key=lambda x: priority[x])
     else:
-        overall_risk = "Low"
+        final_severity = "LOW"
 
-    # 🧠 Policy Type Detection
-    policy_type = "Secure Policy"
-
-    if total_score >= 200:
-        policy_type = "Over-Permissive Policy"
-    elif any(f["issue"] == "Full Admin Access" for f in findings):
-        policy_type = "Admin Policy"
+    policy_type = detect_policy_type(policy)
 
     return {
-        "overall_risk": overall_risk,
-        "total_score": total_score,
         "policy_type": policy_type,
-        "findings": findings
+        "severity": final_severity,
+        "findings": list(set(findings))  # remove duplicates
     }
