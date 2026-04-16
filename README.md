@@ -81,8 +81,8 @@ streamlit run app.py
 
 ## Notes
 
-- Ensure valid IAM JSON format  
-- Backend URL must be correctly configured  
-- Designed for learning and demonstration purposes  
+- Detects wildcard (*) permissions in actions and resources
+- Highlights overly broad access that may lead to security risks
+- Provides least-privilege recommendations based on detected issues 
 
 ---
