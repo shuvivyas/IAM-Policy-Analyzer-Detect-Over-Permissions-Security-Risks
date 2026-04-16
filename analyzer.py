@@ -54,7 +54,7 @@ def analyze_policy(policy):
                 "Gives complete control over all AWS services"
             )
             policy_tags.append("Admin Policy")
-            continue
+            
 
         # 🔥 Privilege Escalation (VERY IMPORTANT)
         escalation_actions = [
