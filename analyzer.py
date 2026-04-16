@@ -9,11 +9,12 @@ def analyze_policy(policy):
         "CRITICAL": 4
     }
 
+    seen_issues = set()
+    policy_tags = []
+
     statements = policy.get("Statement", [])
     if not isinstance(statements, list):
         statements = [statements]
-
-    policy_tags = []
 
     for stmt in statements:
         if not isinstance(stmt, dict):
@@ -21,90 +22,132 @@ def analyze_policy(policy):
 
         actions = stmt.get("Action", [])
         resources = stmt.get("Resource", [])
+        condition = stmt.get("Condition", None)
 
         if isinstance(actions, str):
             actions = [actions]
         if isinstance(resources, str):
             resources = [resources]
 
+        # Helper to avoid duplicate findings
+        def add_finding(issue, risk, fix, attack, context):
+            if issue in seen_issues:
+                return
+            seen_issues.add(issue)
+
+            findings.append({
+                "issue": issue,
+                "risk": risk,
+                "fix": fix,
+                "attack": attack,
+                "context": context
+            })
+            severities.append(risk)
+
         # 🔴 CRITICAL
         if "*" in actions and "*" in resources:
-            findings.append({
-                "issue": "Full wildcard access (*:*)",
-                "risk": "CRITICAL",
-                "fix": "Avoid using '*' for both Action and Resource",
-                "attack": "Privilege escalation / Account takeover",
-                "context": "Gives complete control over all AWS services"
-            })
-            severities.append("CRITICAL")
+            add_finding(
+                "Full wildcard access (*:*)",
+                "CRITICAL",
+                "Avoid using '*' for both Action and Resource",
+                "Privilege escalation / Account takeover",
+                "Gives complete control over all AWS services"
+            )
             policy_tags.append("Admin Policy")
             continue
 
-        # 🔥 HIGH (IAM full access)
+        # 🔥 Privilege Escalation (VERY IMPORTANT)
+        escalation_actions = [
+            "iam:PassRole",
+            "sts:AssumeRole",
+            "iam:AttachUserPolicy",
+            "iam:PutUserPolicy",
+            "iam:AddUserToGroup"
+        ]
+
+        for action in actions:
+            if action in escalation_actions:
+                add_finding(
+                    "Privilege escalation path detected",
+                    "CRITICAL",
+                    "Restrict role passing and policy attachment permissions",
+                    "Privilege escalation",
+                    f"Action {action} can be abused to gain higher privileges"
+                )
+                policy_tags.append("Over-Permissive Policy")
+
+        # 🔥 IAM full access
         for action in actions:
             if isinstance(action, str) and action.startswith("iam:"):
-                findings.append({
-                    "issue": "Sensitive IAM permission detected",
-                    "risk": "HIGH",
-                    "fix": "Restrict IAM permissions",
-                    "attack": "Privilege escalation",
-                    "context": "IAM access can lead to full account control"
-                })
-                severities.append("HIGH")
+                add_finding(
+                    "Sensitive IAM permission detected",
+                    "HIGH",
+                    "Restrict IAM permissions",
+                    "Privilege escalation",
+                    "IAM access can lead to full account control"
+                )
                 policy_tags.append("Over-Permissive Policy")
                 break
 
-        # 🔥 AWS service context
+        # 🔥 Service full access
         for action in actions:
             if action == "s3:*":
-                findings.append({
-                    "issue": "Full S3 access",
-                    "risk": "HIGH",
-                    "fix": "Limit S3 permissions",
-                    "attack": "Data exfiltration",
-                    "context": "Full access to S3 can expose sensitive data"
-                })
-                severities.append("HIGH")
+                add_finding(
+                    "Full S3 access",
+                    "HIGH",
+                    "Limit S3 permissions",
+                    "Data exfiltration",
+                    "Full access to S3 can expose sensitive data"
+                )
 
             if action == "ec2:*":
-                findings.append({
-                    "issue": "Full EC2 access",
-                    "risk": "HIGH",
-                    "fix": "Restrict EC2 permissions",
-                    "attack": "Infrastructure takeover",
-                    "context": "Can launch/modify compute resources"
-                })
-                severities.append("HIGH")
+                add_finding(
+                    "Full EC2 access",
+                    "HIGH",
+                    "Restrict EC2 permissions",
+                    "Infrastructure takeover",
+                    "Can launch/modify compute resources"
+                )
 
-        # 🟠 MEDIUM
+        # 🟠 MEDIUM - broad resource
         if "*" in resources:
-            findings.append({
-                "issue": "Resource is too broad (*)",
-                "risk": "MEDIUM",
-                "fix": "Restrict to specific resources",
-                "attack": "Data exposure",
-                "context": "Applies to all resources"
-            })
-            severities.append("MEDIUM")
+            add_finding(
+                "Resource is too broad (*)",
+                "MEDIUM",
+                "Restrict to specific resources",
+                "Data exposure",
+                "Applies to all resources"
+            )
 
+        # 🟠 MEDIUM - destructive S3
         for action in actions:
-            if isinstance(action, str) and action in ["s3:PutObject", "s3:DeleteObject"]:
-                findings.append({
-                    "issue": "Destructive S3 permission detected",
-                    "risk": "MEDIUM",
-                    "fix": "Limit write/delete access",
-                    "attack": "Data tampering",
-                    "context": "Allows modifying or deleting data"
-                })
-                severities.append("MEDIUM")
+            if action in ["s3:PutObject", "s3:DeleteObject"]:
+                add_finding(
+                    "Destructive S3 permission detected",
+                    "MEDIUM",
+                    "Limit write/delete access",
+                    "Data tampering",
+                    "Allows modifying or deleting data"
+                )
                 break
 
+        # 🟡 NEW - Missing condition
+        if not condition:
+            add_finding(
+                "No condition restrictions",
+                "LOW",
+                "Add conditions like IP restriction or MFA",
+                "Unauthorized access",
+                "Policy has no conditional checks"
+            )
+
+    # Final severity
     if severities:
         final_severity = max(severities, key=lambda x: priority[x])
     else:
         final_severity = "LOW"
 
-    # 🎯 Policy classification
+    # Policy classification
     if "Admin Policy" in policy_tags:
         policy_label = "Admin Policy"
     elif "Over-Permissive Policy" in policy_tags:
