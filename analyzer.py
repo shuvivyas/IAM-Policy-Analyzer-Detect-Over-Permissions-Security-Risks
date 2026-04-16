@@ -1,18 +1,16 @@
-from fastapi import FastAPI, File, UploadFile
-import json
+def analyze_policy(policy):
+    findings = []
+    severities = []
 
-app = FastAPI()
+    priority = {
+        "LOW": 1,
+        "MEDIUM": 2,
+        "HIGH": 3,
+        "CRITICAL": 4
+    }
 
-priority = {
-    "LOW": 1,
-    "MEDIUM": 2,
-    "HIGH": 3,
-    "CRITICAL": 4
-}
-
-
-def detect_policy_type(policy):
-    try:
+    # Detect policy type
+    def detect_policy_type(policy):
         statements = policy.get("Statement", [])
         if not isinstance(statements, list):
             statements = [statements]
@@ -22,84 +20,60 @@ def detect_policy_type(policy):
                 return "Resource-Based Policy"
 
         return "Identity-Based Policy"
-    except:
-        return "Unknown"
 
+    statements = policy.get("Statement", [])
+    if not isinstance(statements, list):
+        statements = [statements]
 
-@app.post("/analyze")
-async def analyze_policy(file: UploadFile = File(...)):
-    try:
-        content = await file.read()
+    for stmt in statements:
+        if not isinstance(stmt, dict):
+            continue
 
-        # Try parsing JSON safely
-        try:
-            policy = json.loads(content)
-        except:
-            policy = json.loads(content.decode("utf-8"))
+        actions = stmt.get("Action", [])
+        resources = stmt.get("Resource", [])
 
-        findings = []
-        severities = []
+        # Normalize to list
+        if isinstance(actions, str):
+            actions = [actions]
+        if isinstance(resources, str):
+            resources = [resources]
 
-        statements = policy.get("Statement", [])
-        if not isinstance(statements, list):
-            statements = [statements]
+        # 🔴 CRITICAL
+        if "*" in actions and "*" in resources:
+            findings.append("Full wildcard access (*:*)")
+            severities.append("CRITICAL")
+            continue
 
-        for stmt in statements:
-            if not isinstance(stmt, dict):
-                continue
+        # 🔥 HIGH
+        if "*" in actions:
+            findings.append("Wildcard action detected")
+            severities.append("HIGH")
 
-            actions = stmt.get("Action", [])
-            resources = stmt.get("Resource", [])
-
-            if isinstance(actions, str):
-                actions = [actions]
-            if isinstance(resources, str):
-                resources = [resources]
-
-            # CRITICAL
-            if "*" in actions and "*" in resources:
-                findings.append("Full wildcard access (*:*)")
-                severities.append("CRITICAL")
-                continue
-
-            # HIGH
-            if "*" in actions:
-                findings.append("Wildcard action detected")
+        for action in actions:
+            if isinstance(action, str) and action.startswith("iam:"):
+                findings.append("Sensitive IAM permission detected")
                 severities.append("HIGH")
+                break
 
-            for action in actions:
-                if isinstance(action, str) and action.startswith("iam:"):
-                    findings.append("Sensitive IAM permission detected")
-                    severities.append("HIGH")
-                    break
+        # 🟠 MEDIUM
+        if "*" in resources:
+            findings.append("Resource is too broad (*)")
+            severities.append("MEDIUM")
 
-            # MEDIUM
-            if "*" in resources:
-                findings.append("Resource is too broad (*)")
+        for action in actions:
+            if isinstance(action, str) and action in ["s3:PutObject", "s3:DeleteObject"]:
+                findings.append("Destructive S3 permission detected")
                 severities.append("MEDIUM")
+                break
 
-            for action in actions:
-                if isinstance(action, str) and action in ["s3:PutObject", "s3:DeleteObject"]:
-                    findings.append("Destructive S3 permission detected")
-                    severities.append("MEDIUM")
-                    break
+    # Final severity (NO score summing)
+    if severities:
+        final_severity = max(severities, key=lambda x: priority[x])
+    else:
+        final_severity = "LOW"
 
-        # Final severity (NO SUMMING)
-        if severities:
-            final_severity = max(severities, key=lambda x: priority[x])
-        else:
-            final_severity = "LOW"
-
-        return {
-            "policy_type": detect_policy_type(policy),
-            "severity": final_severity,
-            "findings": list(set(findings))
-        }
-
-    except Exception as e:
-        # NEVER crash → send error to UI
-        return {
-            "policy_type": "Error",
-            "severity": "ERROR",
-            "findings": [str(e)]
-        }
+    return {
+        "policy_type": detect_policy_type(policy),
+        "severity": final_severity,
+        "findings": list(set(findings))
+    }
