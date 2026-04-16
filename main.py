@@ -1,6 +1,5 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, UploadFile, File
 from analyzer import analyze_policy
-from fastapi import UploadFile, File
 import json
 
 app = FastAPI()
@@ -11,14 +10,23 @@ def home():
 
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)):
-    content = await file.read()
-    policy = json.loads(content)
-    result = analyze_policy(policy)
-    return result
+    try:
+        content = await file.read()
+        policy = json.loads(content)
+
+        if "Statement" not in policy:
+            return {"error": "Invalid IAM Policy: Missing 'Statement'"}
+
+        result = analyze_policy(policy)
+        return result
+
+    except json.JSONDecodeError:
+        return {"error": "Invalid JSON file"}
+
+    except Exception as e:
+        return {"error": str(e)}
+
 
 @app.post("/upload")
 async def upload_policy(file: UploadFile = File(...)):
-    content = await file.read()
-    policy = json.loads(content)
     return {"test": "coming from render"}
-    
