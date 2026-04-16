@@ -20,6 +20,11 @@ def analyze_policy(policy):
         if not isinstance(stmt, dict):
             continue
 
+        # ✅ NEW: Effect check
+        effect = stmt.get("Effect", "Allow")
+        if effect != "Allow":
+            continue
+
         actions = stmt.get("Action", [])
         resources = stmt.get("Resource", [])
         condition = stmt.get("Condition", None)
@@ -28,6 +33,9 @@ def analyze_policy(policy):
             actions = [actions]
         if isinstance(resources, str):
             resources = [resources]
+
+        # Normalize actions to lowercase
+        actions = [a.lower() for a in actions if isinstance(a, str)]
 
         # Helper to avoid duplicate findings
         def add_finding(issue, risk, fix, attack, context):
@@ -44,7 +52,7 @@ def analyze_policy(policy):
             })
             severities.append(risk)
 
-        # 🔴 CRITICAL
+        # 🔴 CRITICAL - Full wildcard
         if "*" in actions and "*" in resources:
             add_finding(
                 "Full wildcard access (*:*)",
@@ -54,15 +62,15 @@ def analyze_policy(policy):
                 "Gives complete control over all AWS services"
             )
             policy_tags.append("Admin Policy")
-            
+            # ❌ no continue → keep analyzing
 
-        # 🔥 Privilege Escalation (VERY IMPORTANT)
+        # 🔥 Privilege Escalation
         escalation_actions = [
-            "iam:PassRole",
-            "sts:AssumeRole",
-            "iam:AttachUserPolicy",
-            "iam:PutUserPolicy",
-            "iam:AddUserToGroup"
+            "iam:passrole",
+            "sts:assumerole",
+            "iam:attachuserpolicy",
+            "iam:putuserpolicy",
+            "iam:addusertogroup"
         ]
 
         for action in actions:
@@ -76,9 +84,9 @@ def analyze_policy(policy):
                 )
                 policy_tags.append("Over-Permissive Policy")
 
-        # 🔥 IAM full access
+        # 🔥 IAM sensitive access
         for action in actions:
-            if isinstance(action, str) and action.startswith("iam:"):
+            if action.startswith("iam:"):
                 add_finding(
                     "Sensitive IAM permission detected",
                     "HIGH",
@@ -121,7 +129,7 @@ def analyze_policy(policy):
 
         # 🟠 MEDIUM - destructive S3
         for action in actions:
-            if action in ["s3:PutObject", "s3:DeleteObject"]:
+            if action in ["s3:putobject", "s3:deleteobject"]:
                 add_finding(
                     "Destructive S3 permission detected",
                     "MEDIUM",
@@ -131,7 +139,7 @@ def analyze_policy(policy):
                 )
                 break
 
-        # 🟡 NEW - Missing condition
+        # 🟡 LOW - missing condition
         if not condition:
             add_finding(
                 "No condition restrictions",
