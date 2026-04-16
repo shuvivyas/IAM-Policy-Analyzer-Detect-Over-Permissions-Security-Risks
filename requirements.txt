@@ -1,3 +1,5 @@
-fastapi uvicorn
+fastapi
+uvicorn
 streamlit
+requests
 python-multipart
