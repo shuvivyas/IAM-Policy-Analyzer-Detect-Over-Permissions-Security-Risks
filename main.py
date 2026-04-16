@@ -9,22 +9,11 @@ app = FastAPI()
 def home():
     return {"message": "IAM Policy Analyzer Running"}
 
-# @app.post("/analyze")
-# async def analyze(request: Request):
-#     policy = await request.json()
-
-#     findings = analyze_policy(policy)
-
-#     return {
-#         "total_issues": len(findings),
-#         "findings": findings
-#     }
 @app.post("/analyze")
-async def analyze(request: Request):
-    policy = await request.json()
-
+async def analyze(file: UploadFile = File(...)):
+    content = await file.read()
+    policy = json.loads(content)
     result = analyze_policy(policy)
-
     return result
 
 @app.post("/upload")
