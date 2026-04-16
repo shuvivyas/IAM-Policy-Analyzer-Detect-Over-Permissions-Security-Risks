@@ -9,20 +9,11 @@ def analyze_policy(policy):
         "CRITICAL": 4
     }
 
-    def detect_policy_type(policy):
-        statements = policy.get("Statement", [])
-        if not isinstance(statements, list):
-            statements = [statements]
-
-        for stmt in statements:
-            if isinstance(stmt, dict) and "Principal" in stmt:
-                return "Resource-Based Policy"
-
-        return "Identity-Based Policy"
-
     statements = policy.get("Statement", [])
     if not isinstance(statements, list):
         statements = [statements]
+
+    policy_tags = []
 
     for stmt in statements:
         if not isinstance(stmt, dict):
@@ -36,41 +27,63 @@ def analyze_policy(policy):
         if isinstance(resources, str):
             resources = [resources]
 
-        # CRITICAL
+        # 🔴 CRITICAL
         if "*" in actions and "*" in resources:
             findings.append({
                 "issue": "Full wildcard access (*:*)",
                 "risk": "CRITICAL",
-                "fix": "Avoid using '*' for both Action and Resource"
+                "fix": "Avoid using '*' for both Action and Resource",
+                "attack": "Privilege escalation / Account takeover",
+                "context": "Gives complete control over all AWS services"
             })
             severities.append("CRITICAL")
+            policy_tags.append("Admin Policy")
             continue
 
-        # HIGH
-        if "*" in actions:
-            findings.append({
-                "issue": "Wildcard action detected",
-                "risk": "HIGH",
-                "fix": "Specify exact actions instead of '*'"
-            })
-            severities.append("HIGH")
-
+        # 🔥 HIGH (IAM full access)
         for action in actions:
             if isinstance(action, str) and action.startswith("iam:"):
                 findings.append({
                     "issue": "Sensitive IAM permission detected",
                     "risk": "HIGH",
-                    "fix": "Restrict IAM permissions to minimum required"
+                    "fix": "Restrict IAM permissions",
+                    "attack": "Privilege escalation",
+                    "context": "IAM access can lead to full account control"
                 })
                 severities.append("HIGH")
+                policy_tags.append("Over-Permissive Policy")
                 break
 
-        # MEDIUM
+        # 🔥 AWS service context
+        for action in actions:
+            if action == "s3:*":
+                findings.append({
+                    "issue": "Full S3 access",
+                    "risk": "HIGH",
+                    "fix": "Limit S3 permissions",
+                    "attack": "Data exfiltration",
+                    "context": "Full access to S3 can expose sensitive data"
+                })
+                severities.append("HIGH")
+
+            if action == "ec2:*":
+                findings.append({
+                    "issue": "Full EC2 access",
+                    "risk": "HIGH",
+                    "fix": "Restrict EC2 permissions",
+                    "attack": "Infrastructure takeover",
+                    "context": "Can launch/modify compute resources"
+                })
+                severities.append("HIGH")
+
+        # 🟠 MEDIUM
         if "*" in resources:
             findings.append({
                 "issue": "Resource is too broad (*)",
                 "risk": "MEDIUM",
-                "fix": "Restrict access to specific resources"
+                "fix": "Restrict to specific resources",
+                "attack": "Data exposure",
+                "context": "Applies to all resources"
             })
             severities.append("MEDIUM")
 
@@ -79,7 +92,9 @@ def analyze_policy(policy):
                 findings.append({
                     "issue": "Destructive S3 permission detected",
                     "risk": "MEDIUM",
-                    "fix": "Limit write/delete permissions"
+                    "fix": "Limit write/delete access",
+                    "attack": "Data tampering",
+                    "context": "Allows modifying or deleting data"
                 })
                 severities.append("MEDIUM")
                 break
@@ -89,8 +104,16 @@ def analyze_policy(policy):
     else:
         final_severity = "LOW"
 
+    # 🎯 Policy classification
+    if "Admin Policy" in policy_tags:
+        policy_label = "Admin Policy"
+    elif "Over-Permissive Policy" in policy_tags:
+        policy_label = "Over-Permissive Policy"
+    else:
+        policy_label = "Least Privilege Policy"
+
     return {
-        "policy_type": detect_policy_type(policy),
+        "policy_type": policy_label,
         "severity": final_severity,
         "risk_score": priority[final_severity] * 50,
         "findings": findings
