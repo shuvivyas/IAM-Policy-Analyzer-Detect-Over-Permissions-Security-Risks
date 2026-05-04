@@ -20,7 +20,6 @@ def analyze_policy(policy):
         if not isinstance(stmt, dict):
             continue
 
-        # ✅ NEW: Effect check
         effect = stmt.get("Effect", "Allow")
         if effect != "Allow":
             continue
@@ -34,10 +33,8 @@ def analyze_policy(policy):
         if isinstance(resources, str):
             resources = [resources]
 
-        # Normalize actions to lowercase
         actions = [a.lower() for a in actions if isinstance(a, str)]
 
-        # Helper to avoid duplicate findings
         def add_finding(issue, risk, fix, attack, context):
             if issue in seen_issues:
                 return
@@ -52,7 +49,6 @@ def analyze_policy(policy):
             })
             severities.append(risk)
 
-        # 🔴 CRITICAL - Full wildcard
         if "*" in actions and "*" in resources:
             add_finding(
                 "Full wildcard access (*:*)",
@@ -62,9 +58,7 @@ def analyze_policy(policy):
                 "Gives complete control over all AWS services"
             )
             policy_tags.append("Admin Policy")
-            # ❌ no continue → keep analyzing
 
-        # 🔥 Privilege Escalation
         escalation_actions = [
             "iam:passrole",
             "sts:assumerole",
@@ -84,7 +78,6 @@ def analyze_policy(policy):
                 )
                 policy_tags.append("Over-Permissive Policy")
 
-        # 🔥 IAM sensitive access
         for action in actions:
             if action.startswith("iam:"):
                 add_finding(
@@ -97,7 +90,6 @@ def analyze_policy(policy):
                 policy_tags.append("Over-Permissive Policy")
                 break
 
-        # 🔥 Service full access
         for action in actions:
             if action == "s3:*":
                 add_finding(
@@ -117,7 +109,6 @@ def analyze_policy(policy):
                     "Can launch/modify compute resources"
                 )
 
-        # 🟠 MEDIUM - broad resource
         if "*" in resources:
             add_finding(
                 "Resource is too broad (*)",
@@ -127,7 +118,6 @@ def analyze_policy(policy):
                 "Applies to all resources"
             )
 
-        # 🟠 MEDIUM - destructive S3
         for action in actions:
             if action in ["s3:putobject", "s3:deleteobject"]:
                 add_finding(
@@ -139,7 +129,6 @@ def analyze_policy(policy):
                 )
                 break
 
-        # 🟡 LOW - missing condition
         if not condition:
             add_finding(
                 "No condition restrictions",
@@ -149,13 +138,11 @@ def analyze_policy(policy):
                 "Policy has no conditional checks"
             )
 
-    # Final severity
     if severities:
         final_severity = max(severities, key=lambda x: priority[x])
     else:
         final_severity = "LOW"
 
-    # Policy classification
     if "Admin Policy" in policy_tags:
         policy_label = "Admin Policy"
     elif "Over-Permissive Policy" in policy_tags:
