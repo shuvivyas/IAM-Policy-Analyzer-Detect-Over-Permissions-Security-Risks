@@ -28,7 +28,6 @@ if uploaded_file is not None:
 
         st.divider()
 
-        # 🔥 Dashboard
         col1, col2 = st.columns(2)
 
         with col1:
@@ -45,18 +44,15 @@ if uploaded_file is not None:
             st.subheader("Score")
             st.metric("Risk Score", result["total_score"])
 
-        # 🧠 Policy Type
         st.subheader("Policy Type")
         st.info(result.get("policy_type", "Unknown"))
 
         st.divider()
 
-        # ✅ Secure case
         if not result.get("findings"):
             st.markdown("### ✅ Secure Policy")
             st.success("No major security issues found")
 
-        # 🔍 Findings
         st.subheader("🔍 Findings")
 
         for f in result.get("findings", []):
@@ -87,7 +83,6 @@ if uploaded_file is not None:
             </div>
             """, unsafe_allow_html=True)
 
-        # 📄 Download Report
         st.divider()
         report = json.dumps(result, indent=4)
 
